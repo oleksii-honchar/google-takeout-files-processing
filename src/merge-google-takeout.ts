@@ -21,7 +21,7 @@ import SambaClient from "samba-client";
 const IS_DRY_RUN = false;
 const SERVER_NAME = "192.168.1.121";
 const SHARE_NAME = "Data";
-const REMOTE_SOURCE_PATH = "!Pictures/Google Takeout 2025-05-20(test)";
+const REMOTE_SOURCE_PATH = "!Pictures/Google Takeout 2025-05-20";
 const REMOTE_TARGET_PATH = path
   .join(REMOTE_SOURCE_PATH, "merged")
   .replace(/\\/g, "/");
@@ -34,41 +34,58 @@ const smbClient = new SambaClient({
 });
 
 /**
- * Recursively moves the contents of a remote directory to another.
- * @param sourceDir The full remote path of the directory to move contents from.
+ * Recursively merges the contents of a source directory into a target directory on the SMB share.
+ * It handles nested directories and avoids errors if items already exist in the target.
+ * @param sourceDir The full remote path of the directory to merge from.
  * @param targetDir The full remote path of the destination directory.
  */
-const moveRemoteContents = async (sourceDir: string, targetDir: string) => {
+const mergeDirectoryContents = async (sourceDir: string, targetDir: string) => {
   try {
     const listPath = path.join(sourceDir, "*").replace(/\\/g, "/");
     const dirResult = await smbClient.dir(listPath);
     const allEntries = dirResult.toString().split('\n').filter(line => {
       const trimmed = line.trim();
-      return trimmed && !trimmed.includes("blocks of size");
+      // Filter out metadata files and the summary line from smbclient
+      return trimmed && !trimmed.includes("blocks of size") && !trimmed.startsWith(".");
     });
 
+    // Ensure the target directory exists before trying to move items into it
+    try {
+      await smbClient.mkdir(targetDir);
+    } catch (e) {
+      // Directory likely already exists, which is fine for merging.
+    }
+
     for (const line of allEntries) {
-      const entryName = line.trim().split(/\s{2,}/)[0];
-      if (entryName === "." || entryName === "..") {
-        continue;
-      }
+      const parts = line.trim().split(/\s{2,}/);
+      const entryName = parts[0];
+      const isDirectory = line.includes(" D ");
 
       const sourcePath = path.join(sourceDir, entryName).replace(/\\/g, "/");
       const targetPath = path.join(targetDir, entryName).replace(/\\/g, "/");
 
-      console.log(`Moving: ${sourcePath} -> ${targetPath}`);
-      if (IS_DRY_RUN) {
-        console.log(`  (Dry Run) Would move: ${sourcePath} -> ${targetPath}`);
+      if (isDirectory) {
+        console.log(`- Merging directory: ${sourcePath} -> ${targetPath}`);
+        // Recursively merge the subdirectory
+        await mergeDirectoryContents(sourcePath, targetPath);
       } else {
-        try {
-          await smbClient.execute("rename", `"${sourcePath}" "${targetPath}"`);
-        } catch (moveError) {
-          console.error(`Error moving '${entryName}':`, moveError);
+        // It's a file, move it.
+        if (IS_DRY_RUN) {
+          console.log(`  (Dry Run) Would move file: ${sourcePath} -> ${targetPath}`);
+        } else {
+          try {
+            await smbClient.execute("rename", `"${sourcePath}" "${targetPath}"`);
+            console.log(`  - Moved file: ${entryName}`);
+          } catch (moveError) {
+            // This error is expected if the file already exists.
+            // This makes the script idempotent.
+            console.warn(`  - Could not move '${entryName}', it may already exist in the target. Skipping.`);
+          }
         }
       }
     }
   } catch (error) {
-    console.error(`Error reading directory ${sourceDir}:`, error);
+    console.error(`Error processing directory ${sourceDir}:`, error);
   }
 };
 
@@ -116,8 +133,8 @@ const reorganizeOnSmb = async () => {
 
       try {
         await smbClient.dir(googlePhotosPath); // Check if "Google Photos" exists
-        console.log(`Processing: ${googlePhotosPath}`);
-        await moveRemoteContents(googlePhotosPath, REMOTE_TARGET_PATH);
+        console.log(`\nProcessing: ${googlePhotosPath}`);
+        await mergeDirectoryContents(googlePhotosPath, REMOTE_TARGET_PATH);
       } catch (error) {
         console.log(`No "Google Photos" folder in ${takeoutPath}, skipping.`);
       }

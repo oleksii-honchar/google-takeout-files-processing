@@ -27,8 +27,8 @@ import { ExifTool } from "exiftool-vendored";
 const IS_DRY_RUN = false;
 const SERVER_NAME = "192.168.1.121";
 const SHARE_NAME = "Data";
-const REMOTE_SOURCE_PATH = "!Pictures/Google Takeout 2025-05-20(test)/merged";
-const REMOTE_PROCESSED_PATH = "!Pictures/Google Takeout 2025-05-20(test)/processed";
+const REMOTE_SOURCE_PATH = "!Pictures/Google Takeout 2025-05-20/merged";
+const REMOTE_PROCESSED_PATH = "!Pictures/Google Takeout 2025-05-20/processed";
 
 const exiftool = new ExifTool();
 const smbClient = new SambaClient({
